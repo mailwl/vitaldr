@@ -8,33 +8,33 @@ typedef uint32_t Elf32_Addr;
 typedef uint16_t Elf32_Half;
 
 typedef struct {
-  uint32_t magic;                 /* 53434500 = SCE\0 */
-  uint32_t version;               /* header version 3*/
-  uint16_t sdk_type;              /* */
-  uint16_t header_type;           /* 1 self, 2 unknown, 3 pkg */
-  uint32_t metadata_offset;       /* metadata offset */
-  uint64_t header_len;            /* self header length */
-  uint64_t elf_filesize;          /* ELF file length */
-  uint64_t self_filesize;         /* SELF file length */
-  uint64_t unknown;               /* UNKNOWN */
-  uint64_t self_offset;           /* SELF offset */
-  uint64_t appinfo_offset;        /* app info offset */
-  uint64_t elf_offset;            /* ELF #1 offset */
-  uint64_t phdr_offset;           /* program header offset */
-  uint64_t shdr_offset;           /* section header offset */
-  uint64_t section_info_offset;   /* section info offset */
-  uint64_t sceversion_offset;     /* version offset */
-  uint64_t controlinfo_offset;    /* control info offset */
-  uint64_t controlinfo_size;      /* control info size */
-  uint64_t padding;               
+    uint32_t magic;                 /* 53434500 = SCE\0 */
+    uint32_t version;               /* header version 3*/
+    uint16_t sdk_type;              /* */
+    uint16_t header_type;           /* 1 self, 2 unknown, 3 pkg */
+    uint32_t metadata_offset;       /* metadata offset */
+    uint64_t header_len;            /* self header length */
+    uint64_t elf_filesize;          /* ELF file length */
+    uint64_t self_filesize;         /* SELF file length */
+    uint64_t unknown;               /* UNKNOWN */
+    uint64_t self_offset;           /* SELF offset */
+    uint64_t appinfo_offset;        /* app info offset */
+    uint64_t elf_offset;            /* ELF #1 offset */
+    uint64_t phdr_offset;           /* program header offset */
+    uint64_t shdr_offset;           /* section header offset */
+    uint64_t section_info_offset;   /* section info offset */
+    uint64_t sceversion_offset;     /* version offset */
+    uint64_t controlinfo_offset;    /* control info offset */
+    uint64_t controlinfo_size;      /* control info size */
+    uint64_t padding;               
 } self_header_t;
 
 typedef struct {
-  uint64_t authid;                /* auth id */
-  uint32_t vendor_id;             /* vendor id */
-  uint32_t self_type;             /* app type 0x0D - , */
-  uint64_t version;               /* app version */
-  uint64_t padding;               /* UNKNOWN */
+    uint64_t authid;                /* auth id */
+    uint32_t vendor_id;             /* vendor id */
+    uint32_t self_type;             /* app type 0x0D - , */
+    uint64_t version;               /* app version */
+    uint64_t padding;               /* UNKNOWN */
 } app_info_t;
 
 #define EI_NIDENT 16
