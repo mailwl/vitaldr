@@ -1,6 +1,6 @@
 
 #include "vitaldr.h"
-
+#include "nids_resolver.h"
 #undef _CONSOLE
 
 #ifdef _CONSOLE
@@ -203,11 +203,11 @@ void idaapi load_file(linput_t *li, uint16_t neflags, const char *fileformatname
         const uint32_t* func_nids = reinterpret_cast<const uint32_t*>(module_info_segment_bytes + (imports->func_nid_table - program_headers[module_info_segment_index].p_vaddr));
         const uint32_t* func_entry = reinterpret_cast<const uint32_t*>(module_info_segment_bytes + (imports->func_entry_table - program_headers[module_info_segment_index].p_vaddr));
         for (uint32_t j = 0; j < imports->num_syms_funcs; ++j) {
-            char buffer[0x100];
-            qsnprintf(buffer, 0x100, "%s_0x%x", lib_name, func_nids[j]);
+            auto name = resolve(lib_name, func_nids[j]);
             msg("  import nid: 0x%x, entry: 0x%x\n", func_nids[j], func_entry[j]);
-            //set_cmt(func_entry[j], buffer, false);
-            set_name(func_entry[j], buffer);
+            set_cmt (func_entry[j], lib_name, false);
+            const char* fname = name.c_str();
+            set_name(func_entry[j], fname);
         }
 
         imports++;
