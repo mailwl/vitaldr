@@ -1,6 +1,8 @@
 
 #include "vitaldr.h"
 #include "nids_resolver.h"
+#include "miniz.h"
+
 #undef _CONSOLE
 
 #ifdef _CONSOLE
@@ -22,7 +24,10 @@ typedef std::string qstring;
 #define NAME_DATA ".data"
 #define CLASS_DATA "DATA"
 
+#define SETPROC_LOADER 1
+
 #define qsnprintf snprintf 
+#define msg printf
 #define qchar char
 
 typedef uint64_t qoff64_t;
@@ -85,7 +90,17 @@ bool append_cmt(ea_t ea, const char* str, bool rptble) {
     return true;
 }
 
+void set_cmt(ea_t, const char*, bool) {
 
+}
+
+void set_name(ea_t, const char*, int flags = 0) {
+
+}
+
+void set_processor_type(const char*, int) {
+
+}
 
 #else
 #include <idaldr.h>
@@ -93,33 +108,30 @@ bool append_cmt(ea_t ea, const char* str, bool rptble) {
 #pragma comment(lib, "ida")
 #endif
 
+/*
 static self_header_t self_header;
 static app_info_t app_info;
-static elf_header_t elf_header_fake, elf_header;
+static elf_header_t  elf_header;
 static std::vector<elf_phdr_t> program_headers;
 static std::vector<segment_info_t> seg_infos;
+*/
 static SegmentInfosForReloc segment_reloc_info;
 
-void load_header(linput_t* li) {
-    qlseek(li, 0);
-    qlread(li, &self_header, sizeof self_header_t);
-    qlseek(li, static_cast<uint32_t>(self_header.appinfo_offset));
-    qlread(li, &app_info, sizeof app_info_t);
-    qlseek(li, static_cast<uint32_t>(self_header.elf_offset));
-    qlread(li, &elf_header_fake, sizeof elf_header_t);
-    qlseek(li, static_cast<uint32_t>(self_header.header_len));
-    qlread(li, &elf_header, sizeof elf_header_t);
 
-}
 extern "C"
 int idaapi accept_file(qstring *fileformatname, qstring *processor, linput_t *li, const char *filename) {
     
-    load_header(li);
+    self_header_t self_header;
+    elf_header_t  elf_header;
+    qlseek(li, 0);
+    qlread(li, &self_header, sizeof self_header_t);
+    qlseek(li, static_cast<uint32_t>(self_header.elf_offset));
+    qlread(li, &elf_header, sizeof elf_header_t);
 
     bool test = (self_header.magic == 0x00454353) && (self_header.version == 3);
     if (!test) return 0;
 
-    test = elf_header.e_machine == EM_ARM;
+    test = (elf_header.e_machine == EM_ARM);
 
     if (!test) return 0;
     
@@ -132,90 +144,150 @@ int idaapi accept_file(qstring *fileformatname, qstring *processor, linput_t *li
 extern "C"
 void idaapi load_file(linput_t *li, uint16_t neflags, const char *fileformatname) {
 
-    load_header(li);
+    // read content of file
+    uint32_t size = qlsize(li);
+    std::vector<uint8_t> buf(size);
+    qlseek(li, 0);
+    qlread(li, buf.data(), size);
 
-    for (int i = 0; i < elf_header.e_phnum; ++i) {
-        segment_info_t si;
-        qlseek(li, self_header.section_info_offset + i * sizeof(segment_info_t));
-        qlread(li, &si, sizeof segment_info_t);
-        seg_infos.push_back(si);
+    self_header_t self_header;
+    elf_header_t  elf_header;
+    std::memcpy(&self_header, buf.data(), sizeof self_header_t);
+    std::memcpy(&elf_header, buf.data() + self_header.elf_offset, sizeof elf_header_t);
+    const segment_info_t* seg_info = reinterpret_cast<const segment_info_t*>(buf.data() + self_header.section_info_offset);
+    const elf_phdr_t* phdr = reinterpret_cast<const elf_phdr_t*>(buf.data() + self_header.phdr_offset);
 
-        qlseek(li, (elf_header.e_phoff + self_header.header_len) + i * elf_header.e_phentsize);
-        elf_phdr_t ph;
-        qlread(li, &ph, elf_header.e_phentsize);
-        program_headers.push_back(ph);
+    bool is_relocatable{ false };
+    if (elf_header.e_type == ET_SCE_EXEC) {
+        is_relocatable = false;
+    }
+    else if (elf_header.e_type == ET_SCE_RELEXEC) {
+        is_relocatable = true;
+    }
 
-        if (ph.p_type == PT_LOAD) {
-            
-            std::vector<char> buf(ph.p_filesz);
-            qlseek(li, ph.p_offset + self_header.header_len);
-            qlread(li, buf.data(), ph.p_filesz);
-
-            
-            if (si.compression == 2) {
-                // TODO: decompession
+    for (uint32_t i = 0; i < elf_header.e_phnum; ++i) {
+        std::vector<uint8_t> segment;
+        if (phdr->p_type == PT_LOAD) {
+            if (seg_info->compression == 2) {
+                // decompress
+                unsigned long dest_bytes = phdr->p_filesz;
+                const uint8_t* const compressed_segment_bytes = buf.data() + seg_info->offset;
+                segment.resize(dest_bytes);
+                int res = mz_uncompress(segment.data(), &dest_bytes, compressed_segment_bytes, static_cast<mz_ulong>(seg_info->length));
+                assert(res == MZ_OK);
             }
             else {
-                mem2base(buf.data(), ph.p_vaddr, ph.p_vaddr + ph.p_filesz, ph.p_offset + self_header.header_len);
-                segment_reloc_info[i] = { std::move(buf), ph.p_vaddr, ph.p_memsz };
+                segment.resize(phdr->p_filesz);
+                uint32_t begin = phdr->p_offset + self_header.header_len;
+                uint32_t end = begin + phdr->p_filesz;
+                std::copy(buf.cbegin() + begin, buf.cbegin() + end, segment.begin());
             }
+            mem2base(segment.data(), phdr->p_vaddr, phdr->p_vaddr + phdr->p_filesz, phdr->p_offset + self_header.header_len);
+            segment_reloc_info[i] = { std::move(segment), phdr->p_vaddr, phdr->p_memsz };
 
-            bool is_code = (PF_X & ph.p_flags) == PF_X;
+            bool is_code = (PF_X & phdr->p_flags) == PF_X;
 
-            if (!add_segm(0, ph.p_vaddr, ph.p_vaddr + ph.p_memsz, is_code ? NAME_CODE : NAME_DATA, is_code ? CLASS_CODE : CLASS_DATA)) {
+            if (!add_segm(0, phdr->p_vaddr, phdr->p_vaddr + phdr->p_memsz, is_code ? NAME_CODE : NAME_DATA, is_code ? CLASS_CODE : CLASS_DATA)) {
                 loader_failure();
             }
-            segment_t* s = getseg(ph.p_vaddr);
+            segment_t* s = getseg(phdr->p_vaddr);
             set_segm_addressing(s, 1);
         }
-        else if (ph.p_type == PT_SCE_RELA) {
+        else if (phdr->p_type == PT_SCE_RELA) {
             // TODO: relocate?
         }
-        
+
+        seg_info++;
+        phdr++;
     }
+
     const uint32_t module_info_offset = elf_header.e_entry & 0x3fffffff;
     const uint32_t module_info_segment_index = static_cast<uint32_t>(elf_header.e_entry >> 30);
     const char* module_info_segment_bytes = (const char*)(segment_reloc_info[module_info_segment_index].addr.data());
     const sce_module_info_t* const module_info = reinterpret_cast<const sce_module_info_t*>(module_info_segment_bytes + module_info_offset);
 
     const sce_module_exports_t* exports = reinterpret_cast<const sce_module_exports_t*>(module_info_segment_bytes + module_info->export_top);
-    const sce_module_imports_t* imports = reinterpret_cast<const sce_module_imports_t*>(module_info_segment_bytes + module_info->import_top);
     
+
     uint32_t exports_count = (module_info->export_end - module_info->export_top) / sizeof(sce_module_exports_t);
     uint32_t imports_count = (module_info->import_end - module_info->import_top) / sizeof(sce_module_imports_t);
 
-    for (int i = 0; i < exports_count; ++i) {
+    uint32_t p_vaddr = segment_reloc_info[module_info_segment_index].p_vaddr;
+
+    for (uint32_t i = 0; i < exports_count; ++i) {
         // TODO: set adresses to IDA
-        
-        const uint32_t* func_nids = reinterpret_cast<const uint32_t*>(module_info_segment_bytes + (exports->nid_table - program_headers[module_info_segment_index].p_vaddr));
-        const uint32_t* func_entry = reinterpret_cast<const uint32_t*>(module_info_segment_bytes + (exports->entry_table - program_headers[module_info_segment_index].p_vaddr));
-        for (uint32_t i = 0; i < exports->num_syms_funcs; ++i) {
-            msg("  export nid: 0x%x, entry: 0x%x\n", func_nids[i], func_entry[i]);
+        const char* lib_name = module_info->name;
+        if (lib_name != nullptr) {
+            msg("exports from library: %s\n", lib_name);
         }
-        exports++;
-    }
-
-    for (uint32_t i = 0; i < imports_count; ++i) {
-        const char* lib_name = module_info_segment_bytes + (imports->library_name - program_headers[module_info_segment_index].p_vaddr);
-
-        msg("imports from library: %s\n", lib_name);
-
-        const uint32_t* func_nids = reinterpret_cast<const uint32_t*>(module_info_segment_bytes + (imports->func_nid_table - program_headers[module_info_segment_index].p_vaddr));
-        const uint32_t* func_entry = reinterpret_cast<const uint32_t*>(module_info_segment_bytes + (imports->func_entry_table - program_headers[module_info_segment_index].p_vaddr));
-        for (uint32_t j = 0; j < imports->num_syms_funcs; ++j) {
-            auto name = resolve(lib_name, func_nids[j]);
-            msg("  import nid: 0x%x, entry: 0x%x\n", func_nids[j], func_entry[j]);
-            set_cmt (func_entry[j], lib_name, false);
-            const char* fname = name.c_str();
-            set_name(func_entry[j], fname);
+        const uint32_t* func_nids = reinterpret_cast<const uint32_t*>(module_info_segment_bytes + (exports->nid_table - p_vaddr));
+        const uint32_t* func_entry = reinterpret_cast<const uint32_t*>(module_info_segment_bytes + (exports->entry_table - p_vaddr));
+        for (uint32_t j = 0; j < exports->num_syms_funcs; ++j) {
+            if (lib_name != nullptr) {
+                auto name = resolve(lib_name, func_nids[j]);
+                const char* fname = name.c_str();
+                msg("  export nid: 0x%x, entry: 0x%x, name: %s\n", func_nids[j], func_entry[j], fname);
+                set_cmt(func_entry[j] & ~1, lib_name, false);
+                set_name(func_entry[j] & ~1, fname);
+            }
         }
-
-        imports++;
+        exports = reinterpret_cast<const sce_module_exports_t*>((const uint8_t*)exports + exports->size);
     }
+    
+    const uint16_t* import_size = reinterpret_cast<const uint16_t*>(module_info_segment_bytes + module_info->import_top);
+    
+    if (*import_size == 0x34) { // version 1
+        const sce_module_imports_t* imports = reinterpret_cast<const sce_module_imports_t*>(module_info_segment_bytes + module_info->import_top);
+        for (uint32_t i = 0; i < imports_count; ++i) {
+            const char* lib_name = module_info_segment_bytes + (imports->library_name - p_vaddr);
 
-    uint32_t entry = program_headers[module_info_segment_index].p_vaddr + module_info->module_start;
-    add_entry(entry, entry, "_start", true);
+            msg("imports from library: %s\n", lib_name);
 
+            const uint32_t* func_nids = reinterpret_cast<const uint32_t*>(module_info_segment_bytes + (imports->func_nid_table - p_vaddr));
+            const uint32_t* func_entry = reinterpret_cast<const uint32_t*>(module_info_segment_bytes + (imports->func_entry_table - p_vaddr));
+            for (uint32_t j = 0; j < imports->num_syms_funcs; ++j) {
+                auto name = resolve(lib_name, func_nids[j]);
+                const char* fname = name.c_str();
+                msg("  import nid: 0x%x, entry: 0x%x, name: %s\n", func_nids[j], func_entry[j], fname);
+                set_cmt(func_entry[j] & ~1, lib_name, false);
+                set_name(func_entry[j] & ~1, fname);
+            }
+            imports = reinterpret_cast<const sce_module_imports_t*>((const uint8_t*)imports + imports->size);
+        }
+    }
+    else { // version 2
+        const sce_module_imports_small_t* imports = reinterpret_cast<const sce_module_imports_small_t*>(module_info_segment_bytes + module_info->import_top);
+        for (uint32_t i = 0; i < imports_count; ++i) {
+            const char* lib_name = module_info_segment_bytes + (imports->library_name - p_vaddr);
+
+            msg("imports from library: %s\n", lib_name);
+
+            const uint32_t* func_nids = reinterpret_cast<const uint32_t*>(module_info_segment_bytes + (imports->func_nid_table - p_vaddr));
+            const uint32_t* func_entry = reinterpret_cast<const uint32_t*>(module_info_segment_bytes + (imports->func_entry_table - p_vaddr));
+            for (uint32_t j = 0; j < imports->num_syms_funcs; ++j) {
+                auto name = resolve(lib_name, func_nids[j]);
+                const char* fname = name.c_str();
+                msg("  import nid: 0x%x, entry: 0x%x, name: %s\n", func_nids[j], func_entry[j], fname);
+                set_cmt(func_entry[j] & ~1, lib_name, false);
+                set_name(func_entry[j] & ~1, fname);
+            }
+
+            imports = reinterpret_cast<const sce_module_imports_small_t*>((const uint8_t*)imports + imports->size);
+        }
+        msg("unsupported import header size: 0x%x", *import_size);
+
+
+    }
+#ifndef _CONSOLE
+    if (!(module_info->module_start == 0 || module_info->module_start == -1)) {
+        uint32_t entry = p_vaddr + (module_info->module_start /* & ~1*/);
+        add_entry(entry, entry, nullptr, true);
+        inf.start_ea = entry;
+        //inf.start_ip = entry + 0x10;
+        inf.demnames |= DEMNAM_GCC3;
+    }
+#endif
+    set_processor_type("ARM", SETPROC_LOADER);
     create_filename_cmt();
 }
 

@@ -61,6 +61,11 @@ enum phdr_flags : uint32_t {
     PF_MASKPROC = 0xf0000000, // Unspecified
 };
 
+// Possible values for e_type
+#define ET_SCE_EXEC (0xFE00) // SCE non-relocatable executable
+#define ET_SCE_RELEXEC (0xFE04) // SCE relocatable executable
+#define ET_SCE_PSP2RELEXEC (0xFFA5) // Old SCE relocatable format (unsupported)
+
 typedef struct {
     unsigned char   e_ident[EI_NIDENT];
     Elf32_Half      e_type;
@@ -126,8 +131,8 @@ typedef union {
 
 typedef uint32_t Address;
 struct SegmentInfoForReloc {
-    std::vector<char> addr; // segment address in guest memory
-    Address p_vaddr; // segment virtual address in guest memory
+    std::vector<uint8_t> addr; // segment address in guest memory
+    uint32_t p_vaddr; // segment virtual address in guest memory
     uint64_t size; // segment memory size
 };
 using SegmentInfosForReloc = std::map<uint16_t, SegmentInfoForReloc>;
@@ -144,6 +149,22 @@ typedef struct sce_module_exports_t {
     uint32_t nid_table;		/* Pointer to array of 32-bit NIDs to export */
     uint32_t entry_table;	/* Pointer to array of data pointers for each NID */
 };
+
+typedef struct sce_module_imports_small_t {
+    uint16_t size;				/* Size of this struct, set to 0x24 */
+    uint16_t version;
+    uint16_t flags;				/* Set to 0x0 */
+    uint16_t num_syms_funcs;	/* Number of function imports */
+    uint16_t num_syms_vars;			/* Number of variable imports */
+    uint16_t num_syms_tls_vars;     /* Number of TLS variable imports */
+    uint32_t library_nid;
+    uint32_t library_name;
+    uint32_t func_nid_table;	/* Pointer to array of function NIDs to import */
+    uint32_t func_entry_table;/* Pointer to array of stub functions to fill */
+    uint32_t reserved7;
+    uint32_t reserved8;
+};
+static_assert(sizeof sce_module_imports_small_t == 0x24, "sce_module_imports_small_t");
 
 typedef struct sce_module_imports_t {
     uint16_t size;				/* Size of this struct, set to 0x34 */
